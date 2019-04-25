@@ -48,3 +48,4 @@ static uint8_t bcdToDec  (uint8_t bcd);
 bool_t   ds3231_setTime    (tm *time);
 bool_t   ds3231_getTime    (tm *time);
 void nameFile(uint8_t *msj, tm *Current_time);
+void infoTime(uint8_t *msj, tm *Current_time);

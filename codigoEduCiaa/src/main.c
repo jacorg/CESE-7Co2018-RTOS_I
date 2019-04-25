@@ -37,9 +37,10 @@
 #include "FreeRTOSConfig.h"
 #include "task.h"
 #include "queue.h"
-
+#include "semphr.h"
 // sAPI header
 #include "sapi.h"
+
 //Strings
 #include  "string.h"
 //SPI
@@ -54,6 +55,8 @@
 //algoritmos de compresion de datos lz4
 #include "lz4.h"
 
+//Interrupcion de teclado
+//#include "interrup.h"
 /*==================[definiciones y macros]==================================*/
 #define N 1024     //el sistema almacena bloques de 256 bytes
 #define INIT 0
@@ -64,17 +67,45 @@ static FIL fp;             // <-- File object needed for each open file
 /*==================[definiciones de datos externos]=========================*/
 
 DEBUG_PRINT_ENABLE;
-
+SemaphoreHandle_t xSemaphoreTEC1 = NULL;
 /*==================[declaraciones de funciones internas]====================*/
 void diskTickHook( void *ptr );
 // Prototipo de funcion de la tarea
 void TaskReadRS232      ( void* taskParmPtr );
 void TaskWriteData      ( void* taskParmPtr );
 void TaskdiskTickHook   ( void* taskParmPtr );
+void tec1               ( void* taskParmPtr );
+void initIRQ(void);
+void GPIO0_IRQHandler(void);
 /*==================[declaraciones de funciones externas]====================*/
  void diskTickHook( void *ptr ){
    disk_timerproc();   // Disk timer process
 }
+
+ void initIRQ() {
+ 	Chip_PININT_Init(LPC_GPIO_PIN_INT);
+ 	Chip_SCU_GPIOIntPinSel(0, 0, 4); //Mapeo del pin donde ocurrirá el evento y
+ 	Chip_PININT_SetPinModeEdge(LPC_GPIO_PIN_INT, PININTCH0);//Se configura el canal
+ 	Chip_PININT_EnableIntLow(LPC_GPIO_PIN_INT, PININTCH0);//Se configura para que el
+ 	NVIC_SetPriority( PIN_INT0_IRQn, 5 );
+ 	NVIC_EnableIRQ(PIN_INT0_IRQn);
+ }
+
+ void GPIO0_IRQHandler(void){
+ 	portBASE_TYPE xSwitchRequired = pdFALSE;
+
+ 	if (Chip_PININT_GetFallStates(LPC_GPIO_PIN_INT) & PININTCH0){ //Verificamos que la interrupción es la esperada
+ 		Chip_PININT_ClearIntStatus(LPC_GPIO_PIN_INT, PININTCH0); //Borramos el flag de interrupción
+ 		xSemaphoreGiveFromISR( xSemaphoreTEC1, &xSwitchRequired ); //En este caso libero un semáforo
+
+ 	}
+ 	portEND_SWITCHING_ISR(xSwitchRequired);//Terminar con taskYIELD_FROM_ISR (&xSwitchRequired);
+ }
+
+
+
+
+
 /*==================[funcion principal]======================================*/
 
 // FUNCION PRINCIPAL, PUNTO DE ENTRADA AL PROGRAMA LUEGO DE ENCENDIDO O RESET.
@@ -83,7 +114,8 @@ int main(void)
    // ---------- CONFIGURACIONES ------------------------------
    // Inicializar y configurar la plataforma
    boardConfig();
-
+   initIRQ();
+   xSemaphoreTEC1 = xSemaphoreCreateBinary();
    /* Inicializar UART_USB a 115200 baudios */
    uartConfig( UART_USB, 115200 );
    // UART for debug messages
@@ -127,6 +159,15 @@ int main(void)
           0                                    // Puntero a la tarea creada en el sistema
        );
 
+      // Crear tarea en freeRTOS
+      	xTaskCreate(tec1,                     // Funcion de la tarea a ejecutar
+      				(const char *) "tec1", // Nombre de la tarea como String amigable para el usuario
+      				configMINIMAL_STACK_SIZE * 2, // Cantidad de stack de la tarea
+      				0,                          // Parametros de tarea
+      				tskIDLE_PRIORITY + 2,         // Prioridad de la tarea
+      				0                         // Puntero a la tarea creada en el sistema
+      				);
+
    // Iniciar scheduler
    vTaskStartScheduler();
 
@@ -149,12 +190,7 @@ int main(void)
 void TaskReadRS232( void* taskParmPtr )
 {
    // ---------- CONFIGURACIONES ------------------------------
-  // printf( "Blinky con freeRTOS y sAPI.\r\n" );
-
 	uint8_t dato;
-   // Envia la tarea al estado bloqueado durante 1 s (delay)
-   // vTaskDelay( 1000 / portTICK_RATE_MS );
-   // gpioWrite( LED1, OFF );
 
    // Tarea periodica cada 5 ms
    portTickType xPeriodicity =  5 / portTICK_RATE_MS;
@@ -162,7 +198,6 @@ void TaskReadRS232( void* taskParmPtr )
    
    // ---------- REPETIR POR SIEMPRE --------------------------
    while(TRUE) {
-
 
 	 if(uartReadByte( UART_USB, &dato )){
 	 	   xQueueSendToBack(queue, &dato, portMAX_DELAY);
@@ -198,7 +233,6 @@ void TaskReadRS232( void* taskParmPtr )
 
 	 uint8_t * dataIn = malloc(N * sizeof(uint8_t)); //asignación de memoria dinámica para
                                                      //recepción de caracteres x queue.
-	 uint8_t * dataOut = malloc(N * sizeof(uint8_t));
 
 	 tm Current_time;
 	 uint8_t msj[40];   //msj to save the filename
@@ -209,16 +243,13 @@ void TaskReadRS232( void* taskParmPtr )
 
       // ---------- REPETIR POR SIEMPRE --------------------------
       while(TRUE) {
-
     	  //Recibe los bytes y los almacena en un array de 1024 valores.
     	  // los datos vienen por un mecanismo de cola "queue"
     	  if (xQueueReceive(queue, &datoRcv, portMAX_DELAY) == pdTRUE) {
     		  *(dataIn+i)=datoRcv;
     		  gpioToggle( LED3);
-    		  printf("guardoooo i:%d dato:%d \r\n",i,dataIn[i]);
     		  i++;
     	  }
-
     	  // Si el buffer interno de recepción se lleno comprimo y copio los datos.
     	  if(i==N)                                  // Buffer lleno entonces vuelco a memoria
     		  if (ds3231_getTime(&Current_time)){   //Lectura DS3231
@@ -226,20 +257,15 @@ void TaskReadRS232( void* taskParmPtr )
     		  	 	 	 	 	 	 	 	        // donde SSS:nombre estacion, A:año, M:mes, DD:día, H:hora, mm:minutos, SS:segundos
     		     printf("Archivo a guardar en microSD %s \r\n",msj);
 
-    		   //inicializo algoritmo de compresión de datos para almacenar en microSD
-               //int LZ4_compress_destSize(const char* src, char* dst, int* srcSizePtr, int targetDstSize)
-    		   //  din=sizeof(dataIn);
-    		   //  ret= LZ4_compress_fast (dataIn, dataOut,N, N,1);
-    		   //  printf("retorno %d\n",ret);
-
+    		    //Creo archivo
     		  if( f_open( &fp, msj, FA_WRITE | FA_OPEN_APPEND ) == FR_OK )
     		     f_write( &fp,dataIn,N, &nbytes );
     		  if( nbytes == N)
     			  gpioToggle(LED2);
 
     		  f_close(&fp);
-    		  i=INIT;
-    		  printf("datos grabados\n");
+    		  i=INIT; // preparo para recibir otro bloque de datos
+    		  printf("datos grabados correctamente\n");
     		  }// end ds3231
 
 
@@ -251,9 +277,6 @@ void TaskReadRS232( void* taskParmPtr )
  void TaskdiskTickHook( void* taskParmPtr )
    {
        // ---------- CONFIGURACIONES ------------------------------
-
-
-
        // Tarea periodica cada 10 ms
        portTickType xPeriodicity =  10 / portTICK_RATE_MS;
        portTickType xLastWakeTime = xTaskGetTickCount();
@@ -266,4 +289,27 @@ void TaskReadRS232( void* taskParmPtr )
           vTaskDelayUntil( &xLastWakeTime, xPeriodicity );
        }
  }
+
+
+ void tec1(void* taskParmPtr) {
+
+	 tm Current_time;
+	 uint8_t msj[20];
+
+ 	portTickType xPeriodicity = 500 / portTICK_RATE_MS;
+ 	portTickType xLastWakeTime = xTaskGetTickCount();
+ 	while (1) {
+ 		if ( xSemaphoreTake( xSemaphoreTEC1, portMAX_DELAY) == pdTRUE) {
+ 			if (ds3231_getTime(&Current_time)){   //Lectura DS3231
+ 				infoTime(msj, &Current_time);
+ 				printf("AAA/MM/DD:HH:mm:SS (RTC)->%s \r\n.",msj);
+ 			}
+ 			vTaskDelay(40);
+ 		}
+ 		vTaskDelayUntil(&xLastWakeTime, xPeriodicity);
+ 	}
+ }
+
+
+
 /*==================[fin del archivo]========================================*/

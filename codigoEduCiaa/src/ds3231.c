@@ -125,3 +125,52 @@ void nameFile(uint8_t *msj, tm *Current_time){
 
 
 }
+
+
+void infoTime(uint8_t *msj, tm *Current_time){
+
+
+	msj[0]=50;  //year
+	msj[1]=48;
+	msj[2]=(Current_time->tm_year/10)+48;
+	msj[3]=(Current_time->tm_year%10)+48;
+
+	msj[4]=47;   // slash
+
+	msj[5]=(Current_time->tm_mon/10)+48;  //month
+	msj[6]=(Current_time->tm_mon%10)+48;
+
+	msj[7]=47;   //slash
+
+	msj[8]=(Current_time->tm_mday/10)+48;   //day
+	msj[9]=(Current_time->tm_mday%10)+48;
+
+	msj[10]=58;   //:
+
+	msj[11]=(Current_time->tm_hour/10)+48;   //hour
+	msj[12]=(Current_time->tm_hour%10)+48;
+
+	msj[13]=58;   //:
+
+	msj[14]=(Current_time->tm_min/10)+48;   //minutes
+	msj[15]=(Current_time->tm_min%10)+48;
+
+	msj[16]=58;   //:
+
+	msj[17]=(Current_time->tm_sec/10)+48;   //seconds
+	msj[18]=(Current_time->tm_sec%10)+48;
+	msj[19]='\0';
+
+}
+
+
+
+
+
+
+
+
+
+
+
+
