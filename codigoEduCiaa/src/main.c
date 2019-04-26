@@ -52,9 +52,6 @@
 #include  "ciaaI2C.h"
 #include  "ds3231.h"
 
-//algoritmos de compresion de datos lz4
-#include "lz4.h"
-
 //Interrupcion de teclado
 //#include "interrup.h"
 /*==================[definiciones y macros]==================================*/
@@ -109,6 +106,9 @@ void GPIO0_IRQHandler(void);
 /*==================[funcion principal]======================================*/
 
 // FUNCION PRINCIPAL, PUNTO DE ENTRADA AL PROGRAMA LUEGO DE ENCENDIDO O RESET.
+ //--------------------------------------------------------------------------
+//--------------------------------main---------------------------------------
+//---------------------------------------------------------------------------
 int main(void)
 {
    // ---------- CONFIGURACIONES ------------------------------
@@ -181,7 +181,7 @@ int main(void)
    // Sistema Operativo, como en el caso de un programa para PC.
    return 0;
 }
-
+/*===========================================================================*/
 /*==================[definiciones de funciones internas]=====================*/
 
 /*==================[definiciones de funciones externas]=====================*/
